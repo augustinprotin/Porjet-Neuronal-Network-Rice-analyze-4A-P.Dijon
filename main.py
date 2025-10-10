@@ -3,6 +3,8 @@
 # Language: English
 # Purpose: Preprocess, analyze, and summarize French agricultural bulletins
 
+# Attention penser a : pip install emoji==1.7.0 clean-text==0.3.0
+
 # --- 1. Install dependencies (if not yet installed) ---
 # !pip install clean-text spacy keybert transformers sentence-transformers langdetect
 
@@ -12,7 +14,6 @@ from langdetect import detect
 import spacy
 from keybert import KeyBERT
 from transformers import pipeline
-
 from PyPDF2 import PdfReader
 import os
 from reportlab.lib.pagesizes import A4
@@ -27,9 +28,6 @@ kw_model = KeyBERT(model='sentence-transformers/paraphrase-multilingual-MiniLM-L
 
 # Summarizer model (fine-tuned for French)
 summarizer = pipeline("summarization", model="moussaKam/barthez-orangesum-abstract")
-
-def main():
-    print ('hello caca')
 
 
 def extractTxtFrom(path):
@@ -97,6 +95,15 @@ def outputToPdf():
     c = canvas.Canvas(pdf_path, pagesize=A4)
     largeur, hauteur = A4
     x, y = 50, hauteur - 50
+    for ligne in contenu.split("\n"):
+        c.drawString(x, y, ligne)
+        y -= 15
+        if y < 50:
+            c.showPage()
+            y = hauteur - 50
+
+    c.save()
+    os.remove(output_path)
 
 # --- 3. Preprocessing function ---
 def preprocess_text(text: str) -> str:
@@ -121,7 +128,6 @@ def preprocess_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-
 # --- 4. Thematic analysis function ---
 def extract_keywords(text: str, top_n: int = 5):
     """Extract key thematic terms using KeyBERT."""
@@ -139,7 +145,6 @@ def summarize_text(text: str, min_length: int = 50, max_length: int = 150) -> st
     """Generate a concise summary using a French summarization model."""
     summary = summarizer(clean_text, max_new_tokens=60, do_sample=False)
     return summary[0]['summary_text']
-
 
 # --- 6. Example run ---
 if __name__ == "__main__":
@@ -168,16 +173,6 @@ if __name__ == "__main__":
 
     print("\n=== AUTOMATIC SUMMARY ===")
     print(summary)
-
-    for ligne in contenu.split("\n"):
-        c.drawString(x, y, ligne)
-        y -= 15
-        if y < 50:
-            c.showPage()
-            y = hauteur - 50
-
-    c.save()
-    os.remove(output_path)
 
 #outputMerger(extractTxtFrom(r"C:\Users\augus\Downloads\CV Augustin PROTIN English.pdf"))
 #pdfFiles()
