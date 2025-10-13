@@ -139,7 +139,6 @@ def extract_keywords(text: str, top_n: int = 5):
     )
     return [kw for kw, _ in keywords]
 
-
 # --- 5. Summarization function ---
 def summarize_text(text: str, min_length: int = 50, max_length: int = 150) -> str:
     """Generate a concise summary using a French summarization model."""
@@ -147,16 +146,7 @@ def summarize_text(text: str, min_length: int = 50, max_length: int = 150) -> st
     return summary[0]['summary_text']
 
 # --- 6. Example run ---
-if __name__ == "__main__":
-    # Example rice health bulletin (French)
-    bulletin = """
-    Le riz de Camargue présente une recrudescence de la pyriculariose 
-    due aux conditions climatiques humides de la semaine passée. 
-    Les parcelles en stade montaison sont les plus sensibles. 
-    Il est recommandé de surveiller les symptômes sur les feuilles 
-    et d’éviter les excès d’azote. 
-    Aucun traitement généralisé n’est conseillé pour le moment.
-    """
+def textProcessingComplete(bulletin):
 
     # Step 1: Clean text
     clean_text = preprocess_text(bulletin)
@@ -174,6 +164,259 @@ if __name__ == "__main__":
     print("\n=== AUTOMATIC SUMMARY ===")
     print(summary)
 
-#outputMerger(extractTxtFrom(r"C:\Users\augus\Downloads\CV Augustin PROTIN English.pdf"))
-#pdfFiles()
-#outputToPdf()
+def listPdfs():
+    # Get the absolute path of the folder where the script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # List all files in that folder
+    files = os.listdir(script_dir)
+    
+    # Filter only PDF files
+    pdfs = [os.path.join(script_dir, f) for f in files if f.lower().endswith(".pdf")]
+    
+    return pdfs
+
+def read_output_file():
+    try:
+        with open("output.txt", "r", encoding="utf-8") as file:
+            content = file.read()
+        return content
+    except FileNotFoundError:
+        return "Error: 'output.txt' not found."
+
+def main():
+    for i in pdfFiles() :
+        outputMerger(extractTxtFrom(i))
+    textProcessingComplete(read_output_file())
+    outputToPdf()
+
+main()# final_rice_reports_analysis.py
+# Author: Augustin's Final Unified PDF Analyzer
+# Purpose: Combine all PDFs into one corpus and generate a global, high-quality summary and keyword analysis.
+# Language: English (code), but French processing/summarization.
+
+import os
+import re
+from typing import List
+from collections import Counter
+from cleantext import clean
+from langdetect import detect
+import spacy
+from keybert import KeyBERT
+from transformers import pipeline
+from PyPDF2 import PdfReader
+
+# ---------------------------
+# Configuration
+# ---------------------------
+INPUT_FOLDER = "input"
+OUTPUT_FILE = "output.txt"
+MAX_CHARS_PER_SEGMENT = 3000  # for summarization segmentation
+TOP_KEYWORDS = 12             # more global keywords
+MIN_TEXT_LEN_TO_SUMMARIZE = 80
+
+# ---------------------------
+# Model loading
+# ---------------------------
+print("Loading models... this might take a minute.")
+try:
+    nlp = spacy.load("fr_core_news_sm")
+except Exception as e:
+    raise RuntimeError("Please install French model: python -m spacy download fr_core_news_sm") from e
+
+kw_model = KeyBERT(model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+summarizer = pipeline("summarization", model="moussaKam/barthez-orangesum-abstract")
+
+# ---------------------------
+# File utilities
+# ---------------------------
+def get_all_pdfs(folder: str = INPUT_FOLDER) -> List[str]:
+    """
+    Return list of all PDF paths in the input folder. Create folder if missing.
+    """
+    base = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, folder)
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+        print(f"Created folder '{path}'. Add PDFs and rerun.")
+        return []
+    pdfs = [os.path.join(path, f) for f in os.listdir(path) if f.lower().endswith(".pdf")]
+    return sorted(pdfs)
+
+
+def extract_pdf_text(pdf_path: str) -> str:
+    """
+    Extract and concatenate text from a PDF file using PyPDF2.
+    """
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception as e:
+        print(f"Failed to read {pdf_path}: {e}")
+        return ""
+
+
+# ---------------------------
+# Text preprocessing
+# ---------------------------
+def preprocess_french_text(text: str) -> str:
+    """
+    Basic French text cleaning and normalization.
+    """
+    if not text.strip():
+        return ""
+    try:
+        lang = detect(text)
+        if lang != "fr":
+            print(f"Warning: Detected '{lang}' language instead of 'fr'.")
+    except Exception:
+        pass
+    cleaned = clean(
+        text,
+        lower=True,
+        no_urls=True,
+        no_emails=True,
+        no_phone_numbers=True,
+        no_currency_symbols=True,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+# ---------------------------
+# Keyword extraction
+# ---------------------------
+def extract_global_keywords(text: str, top_n: int = TOP_KEYWORDS) -> List[str]:
+    """
+    Extract representative keywords for the entire corpus using KeyBERT.
+    Falls back to noun chunk frequency if needed.
+    """
+    if not text.strip():
+        return []
+
+    try:
+        kw = kw_model.extract_keywords(text, keyphrase_ngram_range=(1, 2),
+                                       stop_words="french", top_n=top_n)
+        result = [w for w, _ in kw if w and w.strip()]
+        if result:
+            return result
+    except Exception as e:
+        print(f"KeyBERT failed: {e}")
+
+    # fallback using spaCy
+    doc = nlp(text)
+    chunks = []
+    for chunk in doc.noun_chunks:
+        t = chunk.text.lower().strip()
+        if len(t) > 2:
+            chunks.append(t)
+    freq = Counter(chunks)
+    return [k for k, _ in freq.most_common(top_n)]
+
+
+# ---------------------------
+# Summarization (multi-step)
+# ---------------------------
+def split_text_into_segments(text: str, max_chars: int = MAX_CHARS_PER_SEGMENT) -> List[str]:
+    """
+    Split large text into smaller sentence-based segments.
+    """
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    segments = []
+    current = ""
+    for s in sentences:
+        if len(current) + len(s) > max_chars:
+            segments.append(current.strip())
+            current = s
+        else:
+            current += " " + s
+    if current.strip():
+        segments.append(current.strip())
+    return segments
+
+
+def summarize_long_text(text: str, min_length: int = 60, max_length: int = 200) -> str:
+    """
+    Perform multi-step summarization: segment -> summarize each -> combine -> summarize again.
+    """
+    if len(text) < MIN_TEXT_LEN_TO_SUMMARIZE:
+        return "Texte trop court pour une synthèse pertinente."
+
+    segments = split_text_into_segments(text)
+    print(f"Segmented into {len(segments)} parts for summarization...")
+
+    partial_summaries = []
+    for i, seg in enumerate(segments, 1):
+        print(f" Summarizing segment {i}/{len(segments)} ...")
+        try:
+            part = summarizer(seg, min_length=min_length, max_length=max_length, do_sample=False)
+            summary_text = part[0]["summary_text"].strip() if isinstance(part, list) else str(part)
+            partial_summaries.append(summary_text)
+        except Exception as e:
+            print(f"Error summarizing segment {i}: {e}")
+
+    # Combine partials and summarize again to ensure global coherence
+    combined = " ".join(partial_summaries)
+    try:
+        final_summary = summarizer(combined, min_length=200, max_length=400, do_sample=False)
+        return final_summary[0]["summary_text"].strip()
+    except Exception as e:
+        print(f"Final summarization failed: {e}")
+        return combined
+
+
+# ---------------------------
+# Output writing
+# ---------------------------
+def write_final_output(keywords: List[str], summary: str, output_path: str = OUTPUT_FILE):
+    """
+    Write the global synthesis and keywords to output.txt.
+    """
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("=== GLOBAL SYNTHESIS OF ALL PDF DOCUMENTS ===\n\n")
+        f.write("Keywords (overall themes):\n")
+        f.write(", ".join(keywords) + "\n\n")
+        f.write("=== SUMMARY ===\n\n")
+        f.write(summary.strip() + "\n\n")
+        f.write("=" * 60 + "\n")
+    print(f"\nGlobal synthesis written to '{output_path}'.")
+
+
+# ---------------------------
+# Main function
+# ---------------------------
+def main():
+    """
+    Collect all PDFs, extract their text, produce one unified corpus,
+    and generate a global synthesis + keywords into output.txt.
+    """
+    pdfs = get_all_pdfs()
+    if not pdfs:
+        print("No PDFs found in input/. Please add files and rerun.")
+        return
+
+    print(f"Found {len(pdfs)} PDF(s). Extracting text...")
+
+    all_texts = []
+    for p in pdfs:
+        print(f"Reading {os.path.basename(p)} ...")
+        raw = extract_pdf_text(p)
+        pre = preprocess_french_text(raw)
+        if pre:
+            all_texts.append(pre)
+
+    if not all_texts:
+        print("No valid text found in PDFs.")
+        return
+
+    combined_text = "\n".join(all_texts)
+    print(f"Total corpus length: {len(combined_text)} characters")
+
+    keywords = extract_global_keywords(combined_text)
+    summary = summarize_long_text(combined_text)
+    write_final_output(keywords, summary)
+
+
+if __name__ == "__main__":
+    main()
