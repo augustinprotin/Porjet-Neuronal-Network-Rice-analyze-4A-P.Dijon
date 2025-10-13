@@ -1,12 +1,40 @@
-# === NLP Pipeline for French Rice Health Bulletins ===
-# Author: [Your Name]
-# Language: English
-# Purpose: Preprocess, analyze, and summarize French agricultural bulletins
+import importlib.util
+import subprocess
+import sys
 
-# Attention penser a : pip install emoji==1.7.0 clean-text==0.3.0
+# Packages and specific versions required
+REQUIRED_PACKAGES = {
+    "emoji": "1.7.0",
+    "clean-text": "0.3.0",
+    "spacy": "3.7.4",
+    "keybert": "0.7.0",
+    "langdetect": "1.0.9",
+    "transformers": "4.43.3",
+    "torch": "2.3.0",
+    "PyPDF2": "3.0.1",
+    "sentence-transformers": "2.7.0",
+}
 
-# --- 1. Install dependencies (if not yet installed) ---
-# !pip install clean-text spacy keybert transformers sentence-transformers langdetect
+def install_package(package_name, version):
+    """Install a specific version of a package using pip."""
+    print(f"Installing {package_name}=={version} ...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", f"{package_name}=={version}"])
+
+def ensure_dependencies():
+    """
+    Verify that each required package is installed.
+    If missing, install the specific required version.
+    """
+    print("🔍 Checking Python dependencies...\n")
+
+    for package, version in REQUIRED_PACKAGES.items():
+        package_import_name = package.replace("-", "_")  # handle imports like clean-text → clean_text
+        if importlib.util.find_spec(package_import_name) is None:
+            install_package(package, version)
+        else:
+            print(f"✅ {package} is already installed.")
+
+    print("\n✅ All required dependencies are installed and ready!")
 
 import re
 from cleantext import clean
