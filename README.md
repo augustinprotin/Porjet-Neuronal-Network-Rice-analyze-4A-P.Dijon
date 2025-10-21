@@ -1,65 +1,50 @@
-# 🧠 Agricultural Reports Analysis using Neural Networks
+# Agricultural Reports Analysis using Neural Networks
 
-## 📘 Project Overview
+## Project Overview
 
-This project is designed to **assist PhD students** in their research by leveraging **neural networks** and **natural language processing (NLP)** to analyze and summarize reports from the **French Ministry of Agriculture**.  
-Its purpose is to automatically **extract insights, detect trends, and compile structured analytical reports** to support academic research.
-
----
-
-## 🎯 Objectives
-
-1. **Data Collection & Preprocessing**  
-   • Extract and clean textual data from official reports (PDF, DOCX, etc.)  
-   • Normalize and structure the data for NLP processing  
-
-2. **Neural Network Analysis**  
-   • Apply deep learning models to identify key themes, correlations, and recurring topics  
-
-3. **Automated Reporting**  
-   • Generate research-ready summaries that include:  
-     - Thematic overviews  
-     - Temporal or regional trends  
-     - Analytical conclusions and insights  
+This project is designed to assist PhD students in their research by using neural networks and natural language processing (NLP) to analyze and summarize reports from the French Ministry of Agriculture.  
+Its main purpose is to automatically extract insights, detect trends, and compile structured analytical reports to support academic studies in agricultural sciences and related fields.
 
 ---
 
-## 🔬 Scientific Purpose
+## Objectives
 
-This project aims to **simplify large-scale document analysis** for doctoral research.  
-By combining AI-based text analysis with automated synthesis, it helps researchers:
-
-- Process large document collections efficiently  
-- Identify relevant and meaningful patterns  
-- Produce **concise, structured summaries** suitable for thesis work  
+The project focuses on three primary goals.  
+First, to collect and preprocess data by extracting and cleaning textual content from official reports, ensuring it is normalized and structured for analysis.  
+Second, to apply neural network models capable of detecting recurring themes, identifying correlations, and highlighting significant information within the data.  
+Finally, to automate the generation of analytical summaries that provide thematic overviews, trend analyses, and synthesized conclusions useful for doctoral research.
 
 ---
 
-## ⚙️ Technologies Used
+## Scientific Purpose
 
-| Category | Tools / Libraries |
-|-----------|-------------------|
-| **Language** | Python |
-| **Deep Learning** | TensorFlow / PyTorch |
-| **NLP** | Transformers, spaCy, NLTK |
-| **Document Parsing** | PDFMiner, PyMuPDF |
-| **Data Processing** | Pandas, NumPy |
+This work aims to simplify and accelerate the process of large-scale document analysis in academic contexts.  
+By combining deep learning and text analysis, it provides a tool that can handle large document collections, automatically identify relevant insights, and produce concise, structured summaries to support research projects and theses.
 
 ---
 
-## 🚧 Project Status
+## Technologies Used
 
-🧪 **Experimental Phase**  
-Currently focused on developing a prototype capable of:
-- Processing a limited dataset of reports  
-- Performing topic extraction and trend analysis  
-- Generating preliminary analytical summaries  
+The project is developed in Python, integrating several key technologies.  
+Deep learning models are implemented with TensorFlow or PyTorch to perform text-based analysis tasks.  
+Natural language processing is handled using libraries such as Transformers, spaCy, and NLTK.  
+For document parsing and data handling, tools like PDFMiner, PyMuPDF, Pandas, and NumPy are used to ensure efficient processing of diverse report formats.
 
 ---
 
-## 🛠️ Installation
+## Project Status
 
-1. **Clone the repository**
+The project is currently in the experimental phase.  
+Development is focused on creating a prototype capable of processing a limited dataset of reports, extracting main topics, detecting trends, and generating preliminary analytical summaries.  
+Subsequent stages will focus on improving accuracy, scalability, and usability.
+
+---
+
+## Installation
+
+To set up the project locally:
+
+1. Clone the repository:
    ```bash
    git clone https://github.com/<your-username>/<repository-name>.git
    cd <repository-name>
