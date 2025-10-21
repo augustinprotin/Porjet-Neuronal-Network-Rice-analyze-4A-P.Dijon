@@ -1,184 +1,123 @@
-# === NLP Pipeline for French Rice Health Bulletins ===
-# Author: [Your Name]
-# Language: English
-# Purpose: Preprocess, analyze, and summarize French agricultural bulletins
-
-# --- 1. Install dependencies (if not yet installed) ---
-# !pip install clean-text spacy keybert transformers sentence-transformers langdetect
-
 import re
 from cleantext import clean
-from langdetect import detect
-import spacy
 from keybert import KeyBERT
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+import spacy
 
-from PyPDF2 import PdfReader
-import os
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-
-# --- 2. Load NLP models ---
-# Load French spaCy model (run: python -m spacy download fr_core_news_md)
+# === Load NLP models ===
 nlp = spacy.load("fr_core_news_sm")
+kw_model = KeyBERT(model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
-# Keyword extractor (uses a multilingual BERT)
-kw_model = KeyBERT(model='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+# === Load summarization model safely ===
+model_name = "moussaKam/barthez-orangesum-abstract"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+summarizer = pipeline("summarization", model=model, tokenizer=tokenizer)
 
-# Summarizer model (fine-tuned for French)
-summarizer = pipeline("summarization", model="moussaKam/barthez-orangesum-abstract")
-
-def main():
-    print ('hello caca')
-
-
-def extractTxtFrom(path):
-    """take in argument the path of and return it in text chain"""
-    path = path.replace("\\", "/")
-    texte = ""
-    try:
-        with open(path, "rb") as f:
-            reader = PdfReader(f)
-            for page in reader.pages:
-                texte += page.extract_text() or ""
-    except Exception as e:
-        print(f"error during the PDF reading : {e}")
-    return texte.strip()
-
-def pdfFiles():
-    """
-    return all pdf files in the Input folder, placed in teh same folder as the script, ex :
-        Porjet-Neuronal-Network-Rice-analyze-4A-P.Dijon/
-        │
-        ├── main.py
-        ├── output.pdf
-        └── input/
-            ├── doc1.pdf
-            └── doc2.pdf
-    """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    input_dir = os.path.join(base_dir, "input")
-    if not os.path.exists(input_dir):
-        print(f"The 'input' can't be found : {input_dir}")
-        os.makedirs("input", exist_ok=True)
-        print("the 'input folder has been sucessfuly created'")
-        return []
-    pdf_files = [
-        os.path.join(input_dir, f)
-        for f in os.listdir(input_dir)
-        if f.lower().endswith(".pdf")
-    ]
-
-    return pdf_files
-
-def outputMerger(text):
-    """
-    add at the end of output.txt the parmeter text
-    """
-    with open("output.txt", "a", encoding="utf-8") as f:
-        f.write(text + "\n")
-
-def outputToPdf():
-    """
-    teke the content of the output.txt and put it in a pdf, before deleting output.txt
-    """
-    dossier_script = os.path.dirname(os.path.abspath(__file__))
-    # CpathFinding
-    output_path = os.path.join(dossier_script, "output.txt")
-    pdf_path = os.path.join(dossier_script, "rapport.pdf")
-
-    if not os.path.exists(output_path):
-        print(f"⚠️ Le fichier '{output_path}' n'existe pas.")
-        return
-
-    with open(output_path, "r", encoding="utf-8") as f:
-        contenu = f.read()
-
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    largeur, hauteur = A4
-    x, y = 50, hauteur - 50
-
-# --- 3. Preprocessing function ---
+# === Preprocessing ===
 def preprocess_text(text: str) -> str:
-    """Clean and prepare raw French text."""
-    # Detect and check language
-    lang = detect(text)
-    if lang != 'fr':
-        raise ValueError(f"Expected French text, but detected: {lang}")
-
-    # Clean text
+    """Nettoyage doux du texte français."""
     text = clean(
         text,
-        lower=True,
+        lower=False,
         no_urls=True,
-        no_punct=False,
         no_emails=True,
         no_phone_numbers=True,
         no_currency_symbols=True
     )
-
-    # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+# === Keyword extraction ===
+def extract_keywords(text: str, top_n: int = 8):
+    """Extraction robuste avec KeyBERT + fallback spaCy."""
+    try:
+        keywords = kw_model.extract_keywords(
+            text,
+            keyphrase_ngram_range=(1, 1),
+            top_n=top_n
+        )
+        keyphrases = [kw for kw, score in keywords if len(kw.split()) > 0]
 
-# --- 4. Thematic analysis function ---
-def extract_keywords(text: str, top_n: int = 5):
-    """Extract key thematic terms using KeyBERT."""
-    keywords = kw_model.extract_keywords(
-        text,
-        keyphrase_ngram_range=(1, 2),
-        stop_words='french',
-        top_n=top_n
-    )
-    return [kw for kw, _ in keywords]
+        # Fallback si KeyBERT ne trouve rien
+        if not keyphrases:
+            doc = nlp(text)
+            keyphrases = list({ent.text for ent in doc.ents if len(ent.text) > 2})
+        return keyphrases
+    except Exception as e:
+        print("⚠️ Erreur KeyBERT :", e)
+        return []
 
+# === Summarization ===
+def summarize_text(text: str, min_length: int = 40, max_length: int = 150):
+    """Résumé français stable avec tronquage au niveau des tokens."""
+    try:
+        # Encode et tronque proprement
+        inputs = tokenizer(
+            text,
+            max_length=1024,     # limite du modèle
+            truncation=True,
+            return_tensors="pt"
+        )
 
-# --- 5. Summarization function ---
-def summarize_text(text: str, min_length: int = 50, max_length: int = 150) -> str:
-    """Generate a concise summary using a French summarization model."""
-    summary = summarizer(clean_text, max_new_tokens=60, do_sample=False)
-    return summary[0]['summary_text']
+        summary_ids = model.generate(
+            **inputs,
+            min_length=min_length,
+            max_length=max_length,
+            no_repeat_ngram_size=2,
+            num_beams=4
+        )
 
+        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+        return summary.strip()
 
-# --- 6. Example run ---
+    except Exception as e:
+        print("⚠️ Erreur résumé :", e)
+        return "(résumé non disponible)"
+
+# === Example run ===
 if __name__ == "__main__":
-    # Example rice health bulletin (French)
-    bulletin = """
-    Le riz de Camargue présente une recrudescence de la pyriculariose 
-    due aux conditions climatiques humides de la semaine passée. 
-    Les parcelles en stade montaison sont les plus sensibles. 
-    Il est recommandé de surveiller les symptômes sur les feuilles 
-    et d’éviter les excès d’azote. 
-    Aucun traitement généralisé n’est conseillé pour le moment.
-    """
+    bulletin = """Les parcelles de référence, sur lesquelles sont localisés les essais variétaux,
+permettent un suivi des stades des différentes variétés en fonction des
+dates de semis.Malgré les températures globalement supérieures aux normales depuis la
+mise en place des cultures, les cycles semis-épiaison apparaissent proches
+des cycles standards pour les variétés très précoces à demi-précoces ayant
+épié à ce jour. Après une période avec un débit très limité mi-juillet (environ 500
+m3/seconde à Tarascon), le Rhône est légèrement remonté depuis, entre
+700 et 800 m3/seconde sur la période récente (source : http://www.rdbrmc.com/hydroreel2/station.php?codestation=81).
+Il convient de rester vigilant et de contrôler la salinité de l’eau au
+niveau des stations de pompage, plus particulièrement en cas
+d’épisodes de Mistral. Le réseau de piégeage (pièges à phéromones) a été mis en place début juin sur
+la zone rizicole camarguaise (20 pièges à phéromones répartis sur 9 sites), alors
+que le pic de vol de la première génération était passé. Après une période au cours de laquelle les captures de papillons ont été
+quasiment nulles, les relevés réalisés depuis une dizaine de jours ont montré un
+redémarrage des captures (voir courbe ci-dessous). La durée de vie des papillons est courte, 4 à 8 jours pendant lesquels les
+femelles pondent leurs œufs. A cette génération, compte tenu de températures élevées, l’incubation des œufs
+dure 5 à 7 jours. Dès éclosion, les jeunes larves migrent vers l’intérieur des tiges
+de riz dans lesquelles elles se développent.La sensibilité des différentes variétés (voir tableau ci-après) à la pyrale du riz et
+la situation parcellaire (zone sensible et/ou parcelle abritée) sont les deux
+éléments principaux à prendre en compte dans l’analyse du risque. Des stries longitudinales caractéristiques, en particulier à l’extrémité des
+dernières feuilles étalées, sont à nouveau observées depuis une dizaine de jours. Les charançons adultes, responsables de ces symptômes sont plus difficiles à
+observer qu’au mois de mai-juin compte tenu d’une végétation plus développée
+dans laquelle ils s’abritent aux heures chaudes. Cette génération d’adultes, issue des larves observées durant le mois de juillet
+au niveau des racines, est celle qui passera l’hiver en diapause (vie ralentie) dans les zones adjacentes aux rizières.
+A ce jour, quelques symptômes sur feuilles et cous ont été observés sur une
+variété sensible présente dans le réseau variétal. La durée d’humectation du
+feuillage (favorisée par des conditions de vent réduit ou nul et de temps couvert)
+constitue un facteur clé du développement de la maladie. Il convient de rester vigilant, et de réaliser des observations fréquentes, en
+particulier dans les situations à risques : variétés les plus sensibles, parcelles ou parties de parcelles abritées (haies, ségonnaux), disponibilité élevée en azote
+(précédent luzerne, …). LES OBSERVATIONS CONTENUES DANS CE BULLETIN ONT ETE REALISEES PAR LES PARTENAIRES SUIVANTS QUI CONSTITUENT LE COMITE DE REDACTION DE CE BULLETIN : ARNAUD BOISNARD, Sonia ER-RAHMOUNI, Gérard
+FEOUGIER, Cyrille THOMAS (Centre Français du Riz),
 
-    # Step 1: Clean text
+
+"""
+
     clean_text = preprocess_text(bulletin)
-
-    # Step 2: Extract thematic keywords
-    themes = extract_keywords(clean_text)
-
-    # Step 3: Generate summary
+    keywords = extract_keywords(clean_text)
     summary = summarize_text(clean_text)
 
-    # Step 4: Display results
-    print("\n=== THEMATIC KEYWORDS ===")
-    print(themes)
+    print("\n=== MOTS-CLÉS ===")
+    print(keywords if keywords else "(aucun mot-clé trouvé)")
 
-    print("\n=== AUTOMATIC SUMMARY ===")
+    print("\n=== RÉSUMÉ ===")
     print(summary)
-
-    for ligne in contenu.split("\n"):
-        c.drawString(x, y, ligne)
-        y -= 15
-        if y < 50:
-            c.showPage()
-            y = hauteur - 50
-
-    c.save()
-    os.remove(output_path)
-
-#outputMerger(extractTxtFrom(r"C:\Users\augus\Downloads\CV Augustin PROTIN English.pdf"))
-#pdfFiles()
-#outputToPdf()
