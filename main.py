@@ -23,8 +23,7 @@ def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
         return []
     return sorted([os.path.join(input_path, f) for f in os.listdir(input_path) if f.lower().endswith(".pdf")])
 
-    # def extract_pdf_text(pdf_path: str) -> str:
-    '''
+def extract_pdf_text(pdf_path: str) -> str:
     try:
         with open(pdf_path, "rb") as f:
             reader = PdfReader(f)
@@ -62,18 +61,6 @@ def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
         print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return ""
 
-    '''
-
-
-def extract_pdf_text(pdf_path: str) -> str:
-    try:
-        with open(pdf_path, "rb") as f:
-            reader = PdfReader(f)
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-
-    except Exception as e:
-        print(f"Erreur lors de la lecture de {pdf_path}: {e}")
-        return ""
 
 
 def chunk_text_by_tokens(text: str, max_tokens: int = None) -> list[str]:
