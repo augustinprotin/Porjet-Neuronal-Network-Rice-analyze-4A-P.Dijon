@@ -61,7 +61,7 @@ def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
         print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return ""
     
-    '''
+    ''' 
     
     
 def extract_pdf_text(pdf_path: str) -> str:
