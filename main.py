@@ -1,449 +1,251 @@
-import importlib.util
-import subprocess
-import sys
-
-# Packages and specific versions required
-REQUIRED_PACKAGES = {
-    "emoji": "1.7.0",
-    "clean-text": "0.3.0",
-    "spacy": "3.7.4",
-    "keybert": "0.7.0",
-    "langdetect": "1.0.9",
-    "transformers": "4.43.3",
-    "torch": "2.3.0",
-    "PyPDF2": "3.0.1",
-    "sentence-transformers": "2.7.0",
-}
-
-def install_package(package_name, version):
-    """Install a specific version of a package using pip."""
-    print(f"Installing {package_name}=={version} ...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", f"{package_name}=={version}"])
-
-def ensure_dependencies():
-    """
-    Verify that each required package is installed.
-    If missing, install the specific required version.
-    """
-    print("🔍 Checking Python dependencies...\n")
-
-    for package, version in REQUIRED_PACKAGES.items():
-        package_import_name = package.replace("-", "_")  # handle imports like clean-text → clean_text
-        if importlib.util.find_spec(package_import_name) is None:
-            install_package(package, version)
-        else:
-            print(f"✅ {package} is already installed.")
-
-    print("\n✅ All required dependencies are installed and ready!")
-
-import re
-from cleantext import clean
-from langdetect import detect
-import spacy
-from keybert import KeyBERT
-from transformers import pipeline
-from PyPDF2 import PdfReader
+from transformers import pipeline, AutoTokenizer
+import fitz
+#import frontend
 import os
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
 
-# --- 2. Load NLP models ---
-# Load French spaCy model (run: python -m spacy download fr_core_news_md)
-nlp = spacy.load("fr_core_news_sm")
-
-# Keyword extractor (uses a multilingual BERT)
-kw_model = KeyBERT(model='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-
-# Summarizer model (fine-tuned for French)
-summarizer = pipeline("summarization", model="moussaKam/barthez-orangesum-abstract")
-
-
-def extractTxtFrom(path):
-    """take in argument the path of and return it in text chain"""
-    path = path.replace("\\", "/")
-    texte = ""
-    try:
-        with open(path, "rb") as f:
-            reader = PdfReader(f)
-            for page in reader.pages:
-                texte += page.extract_text() or ""
-    except Exception as e:
-        print(f"error during the PDF reading : {e}")
-    return texte.strip()
-
-def pdfFiles():
-    """
-    return all pdf files in the Input folder, placed in teh same folder as the script, ex :
-        Porjet-Neuronal-Network-Rice-analyze-4A-P.Dijon/
-        │
-        ├── main.py
-        ├── output.pdf
-        └── input/
-            ├── doc1.pdf
-            └── doc2.pdf
-    """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    input_dir = os.path.join(base_dir, "input")
-    if not os.path.exists(input_dir):
-        print(f"The 'input' can't be found : {input_dir}")
-        os.makedirs("input", exist_ok=True)
-        print("the 'input folder has been sucessfuly created'")
-        return []
-    pdf_files = [
-        os.path.join(input_dir, f)
-        for f in os.listdir(input_dir)
-        if f.lower().endswith(".pdf")
-    ]
-
-    return pdf_files
-
-def outputMerger(text):
-    """
-    add at the end of output.txt the parmeter text
-    """
-    with open("output.txt", "a", encoding="utf-8") as f:
-        f.write(text + "\n")
-
-def outputToPdf():
-    """
-    teke the content of the output.txt and put it in a pdf, before deleting output.txt
-    """
-    dossier_script = os.path.dirname(os.path.abspath(__file__))
-    # CpathFinding
-    output_path = os.path.join(dossier_script, "output.txt")
-    pdf_path = os.path.join(dossier_script, "rapport.pdf")
-
-    if not os.path.exists(output_path):
-        print(f"⚠️ Le fichier '{output_path}' n'existe pas.")
-        return
-
-    with open(output_path, "r", encoding="utf-8") as f:
-        contenu = f.read()
-
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    largeur, hauteur = A4
-    x, y = 50, hauteur - 50
-    for ligne in contenu.split("\n"):
-        c.drawString(x, y, ligne)
-        y -= 15
-        if y < 50:
-            c.showPage()
-            y = hauteur - 50
-
-    c.save()
-    os.remove(output_path)
-
-# --- 3. Preprocessing function ---
-def preprocess_text(text: str) -> str:
-    """Clean and prepare raw French text."""
-    # Detect and check language
-    lang = detect(text)
-    if lang != 'fr':
-        raise ValueError(f"Expected French text, but detected: {lang}")
-
-    # Clean text
-    text = clean(
-        text,
-        lower=True,
-        no_urls=True,
-        no_punct=False,
-        no_emails=True,
-        no_phone_numbers=True,
-        no_currency_symbols=True
-    )
-
-    # Remove extra whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-# --- 4. Thematic analysis function ---
-def extract_keywords(text: str, top_n: int = 5):
-    """Extract key thematic terms using KeyBERT."""
-    keywords = kw_model.extract_keywords(
-        text,
-        keyphrase_ngram_range=(1, 2),
-        stop_words='french',
-        top_n=top_n
-    )
-    return [kw for kw, _ in keywords]
-
-# --- 5. Summarization function ---
-def summarize_text(text: str, min_length: int = 50, max_length: int = 150) -> str:
-    """Generate a concise summary using a French summarization model."""
-    summary = summarizer(clean_text, max_new_tokens=60, do_sample=False)
-    return summary[0]['summary_text']
-
-# --- 6. Example run ---
-def textProcessingComplete(bulletin):
-
-    # Step 1: Clean text
-    clean_text = preprocess_text(bulletin)
-
-    # Step 2: Extract thematic keywords
-    themes = extract_keywords(clean_text)
-
-    # Step 3: Generate summary
-    summary = summarize_text(clean_text)
-
-    # Step 4: Display results
-    print("\n=== THEMATIC KEYWORDS ===")
-    print(themes)
-
-    print("\n=== AUTOMATIC SUMMARY ===")
-    print(summary)
-
-def listPdfs():
-    # Get the absolute path of the folder where the script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # List all files in that folder
-    files = os.listdir(script_dir)
-    
-    # Filter only PDF files
-    pdfs = [os.path.join(script_dir, f) for f in files if f.lower().endswith(".pdf")]
-    
-    return pdfs
-
-def read_output_file():
-    try:
-        with open("output.txt", "r", encoding="utf-8") as file:
-            content = file.read()
-        return content
-    except FileNotFoundError:
-        return "Error: 'output.txt' not found."
-
-def main():
-    for i in pdfFiles() :
-        outputMerger(extractTxtFrom(i))
-    textProcessingComplete(read_output_file())
-    outputToPdf()
-
-main()# final_rice_reports_analysis.py
-# Author: Augustin's Final Unified PDF Analyzer
-# Purpose: Combine all PDFs into one corpus and generate a global, high-quality summary and keyword analysis.
-# Language: English (code), but French processing/summarization.
-
-import os
-import re
-from typing import List
-from collections import Counter
-from cleantext import clean
-from langdetect import detect
-import spacy
-from keybert import KeyBERT
-from transformers import pipeline
-from PyPDF2 import PdfReader
-
-# ---------------------------
-# Configuration
-# ---------------------------
 INPUT_FOLDER = "input"
-OUTPUT_FILE = "output.txt"
-MAX_CHARS_PER_SEGMENT = 3000  # for summarization segmentation
-TOP_KEYWORDS = 12             # more global keywords
-MIN_TEXT_LEN_TO_SUMMARIZE = 80
+OUTPUT_TXT = "output.txt"
+OUTPUT_PDF = "rapport.pdf"
+MODEL_NAME = "facebook/bart-large-cnn"
+summarizer = pipeline("summarization", model=MODEL_NAME, truncation=True)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-# ---------------------------
-# Model loading
-# ---------------------------
-print("Loading models... this might take a minute.")
-try:
-    nlp = spacy.load("fr_core_news_sm")
-except Exception as e:
-    raise RuntimeError("Please install French model: python -m spacy download fr_core_news_sm") from e
 
-kw_model = KeyBERT(model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-summarizer = pipeline("summarization", model="moussaKam/barthez-orangesum-abstract")
-
-# ---------------------------
-# File utilities
-# ---------------------------
-def get_all_pdfs(folder: str = INPUT_FOLDER) -> List[str]:
-    """
-    Return list of all PDF paths in the input folder. Create folder if missing.
-    """
-    base = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(base, folder)
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-        print(f"Created folder '{path}'. Add PDFs and rerun.")
+def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    input_path = os.path.join(base_dir, folder)
+    if not os.path.exists(input_path):
+        os.makedirs(input_path, exist_ok=True)
+        print(f"Dossier '{input_path}' créé. Ajoutez vos PDFs et relancez.")
         return []
-    pdfs = [os.path.join(path, f) for f in os.listdir(path) if f.lower().endswith(".pdf")]
-    return sorted(pdfs)
-
+    return sorted([os.path.join(input_path, f) for f in os.listdir(input_path) if f.lower().endswith(".pdf")])
 
 def extract_pdf_text(pdf_path: str) -> str:
-    """
-    Extract and concatenate text from a PDF file using PyPDF2.
-    """
     try:
-        with open(pdf_path, "rb") as f:
-            reader = PdfReader(f)
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        doc = fitz.open(pdf_path)
+        full_text = ""
+
+        for page_num, page in enumerate(doc, start=1):
+            blocks = page.get_text("dict")["blocks"]
+            for block in blocks:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span["text"].strip()
+                        color = span.get("color", (0, 0, 0))
+                        if isinstance(color, int):
+                            # convertir l'entier 0xRRGGBB en tuple (r,g,b) normalisé entre 0 et 1
+                            r = ((color >> 16) & 255) / 255
+                            g = ((color >> 8) & 255) / 255
+                            b = (color & 255) / 255
+                            color = (r, g, b)
+                        size = span["size"]
+
+                        # === Détection du texte vert (titres de section) ===
+                        if color[1] > 0.6 and color[0] < 0.4 and color[2] < 0.4:
+                            full_text += f"\n=== {text.upper()} ===\n"
+                        else:
+                            full_text += " " + text
+
+            full_text += "\n\n"
+
+        output_path = pdf_path.replace(".pdf", "_annotated.txt")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(full_text)
+
+        print(f"✅ Extraction terminée (avec styles) : {output_path}")
+        return full_text
+
     except Exception as e:
-        print(f"Failed to read {pdf_path}: {e}")
+        print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return ""
 
-
-# ---------------------------
-# Text preprocessing
-# ---------------------------
-def preprocess_french_text(text: str) -> str:
+def extract_paragraphs(pdf_path: str) -> list[str]:
     """
-    Basic French text cleaning and normalization.
+    Extrait proprement les paragraphes d’un PDF en respectant
+    la structure naturelle des blocs textuels du document.
     """
-    if not text.strip():
-        return ""
     try:
-        lang = detect(text)
-        if lang != "fr":
-            print(f"Warning: Detected '{lang}' language instead of 'fr'.")
-    except Exception:
-        pass
-    cleaned = clean(
-        text,
-        lower=True,
-        no_urls=True,
-        no_emails=True,
-        no_phone_numbers=True,
-        no_currency_symbols=True,
-    )
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+        doc = fitz.open(pdf_path)
+        paragraphs = []
 
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
 
-# ---------------------------
-# Keyword extraction
-# ---------------------------
-def extract_global_keywords(text: str, top_n: int = TOP_KEYWORDS) -> List[str]:
-    """
-    Extract representative keywords for the entire corpus using KeyBERT.
-    Falls back to noun chunk frequency if needed.
-    """
-    if not text.strip():
+            for block in blocks:
+                # type 0 = bloc texte
+                if block["type"] != 0:
+                    continue
+
+                block_text = ""
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        t = span.get("text", "").strip()
+                        if t:
+                            block_text += " " + t
+
+                #le block au dessus fait toutes la magie, il permet de récuépéré les différents "block"/paragraphe, de récupérér la police ou les spé avec "span"
+                #et après récupère le texte dans ces blocks. Enfin, strip enlève juste les espaces inutiles qui se sont glissés là.
+
+                clean = block_text.strip()
+                if clean:
+                    paragraphs.append(clean)
+
+        return paragraphs
+
+    except Exception as e:
+        print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return []
 
-    try:
-        kw = kw_model.extract_keywords(text, keyphrase_ngram_range=(1, 2),
-                                       stop_words="french", top_n=top_n)
-        result = [w for w, _ in kw if w and w.strip()]
-        if result:
-            return result
-    except Exception as e:
-        print(f"KeyBERT failed: {e}")
 
-    # fallback using spaCy
-    doc = nlp(text)
+def chunk_paragraphs(paragraphs: list[str], max_tokens: int = 600) -> list[str]:
+    """
+    Construit des chunks de texte sans jamais couper un paragraphe.
+    Chaque chunk reste sous la limite de tokens du modèle.
+    """
     chunks = []
-    for chunk in doc.noun_chunks:
-        t = chunk.text.lower().strip()
-        if len(t) > 2:
-            chunks.append(t)
-    freq = Counter(chunks)
-    return [k for k, _ in freq.most_common(top_n)]
-
-
-# ---------------------------
-# Summarization (multi-step)
-# ---------------------------
-def split_text_into_segments(text: str, max_chars: int = MAX_CHARS_PER_SEGMENT) -> List[str]:
-    """
-    Split large text into smaller sentence-based segments.
-    """
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    segments = []
     current = ""
-    for s in sentences:
-        if len(current) + len(s) > max_chars:
-            segments.append(current.strip())
-            current = s
+
+    for para in paragraphs:
+        test_text = (current + " " + para).strip()
+        token_count = len(tokenizer.encode(test_text, add_special_tokens=False))
+
+        if token_count > max_tokens:
+            # On "ferme" le chunk courant
+            if current.strip():
+                chunks.append(current.strip())
+            current = para  # On commence un nouveau chunk
         else:
-            current += " " + s
+            current = test_text
+
     if current.strip():
-        segments.append(current.strip())
-    return segments
+        chunks.append(current.strip())
+
+    return chunks
 
 
-def summarize_long_text(text: str, min_length: int = 60, max_length: int = 200) -> str:
-    """
-    Perform multi-step summarization: segment -> summarize each -> combine -> summarize again.
-    """
-    if len(text) < MIN_TEXT_LEN_TO_SUMMARIZE:
-        return "Texte trop court pour une synthèse pertinente."
 
-    segments = split_text_into_segments(text)
-    print(f"Segmented into {len(segments)} parts for summarization...")
+def chunk_text_by_tokens(text: str, max_tokens: int = None) -> list[str]:
+    if not max_tokens:
+        # garder une marge de sécurité par rapport à la limite du modèle
+        max_tokens = max(256, min(800, tokenizer.model_max_length - 50))
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    chunks = []
+    for i in range(0, len(ids), max_tokens):
+        slice_ids = ids[i:i + max_tokens]
+        chunk_text = tokenizer.decode(slice_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        chunks.append(chunk_text.strip())
+    return [c for c in chunks if c]
 
-    partial_summaries = []
-    for i, seg in enumerate(segments, 1):
-        print(f" Summarizing segment {i}/{len(segments)} ...")
+
+def neuronal_net_resum(text: str):
+    if not text.strip():
+        return "Aucun texte trouvé."
+    chunks = chunk_text_by_tokens(text)
+    summaries = []
+    print(f"{len(chunks)} blocs à résumer.")
+    # paramètres raisonnables de résumé (en tokens)
+    DEFAULT_MAX_SUMMARY = 180
+    DEFAULT_MIN_SUMMARY = 60
+    for i, chunk in enumerate(chunks, start=1):
+        # adapter si chunk très court
         try:
-            part = summarizer(seg, min_length=min_length, max_length=max_length, do_sample=False)
-            summary_text = part[0]["summary_text"].strip() if isinstance(part, list) else str(part)
-            partial_summaries.append(summary_text)
+            token_count = len(tokenizer.encode(chunk, add_special_tokens=False))
+        except Exception:
+            token_count = 0
+        max_len = min(DEFAULT_MAX_SUMMARY, max(30, int(token_count * 0.25)))
+        min_len = max(DEFAULT_MIN_SUMMARY // 3, int(max_len * 0.4))
+        print(f"Bloc {i}/{len(chunks)} : ~{token_count} tokens → résumé {min_len}-{max_len} tokens.")
+        try:
+            out = summarizer(
+                chunk,
+                max_length=max_len,
+                min_length=min_len,
+                do_sample=False,
+                truncation=True
+            )
+            summary = out[0]["summary_text"].strip()
+            if summary:
+                summaries.append(summary)
+            else:
+                print(f"Attention: résumé vide pour le bloc {i}, j'ajoute un fallback (premières phrases).")
+                summaries.append(chunk[:min(400, len(chunk))].strip())
         except Exception as e:
-            print(f"Error summarizing segment {i}: {e}")
+            print(f"Erreur sur le bloc {i}: {e}. Ajout d'un fallback.")
+            summaries.append(chunk[:min(400, len(chunk))].strip())
 
-    # Combine partials and summarize again to ensure global coherence
-    combined = " ".join(partial_summaries)
-    try:
-        final_summary = summarizer(combined, min_length=200, max_length=400, do_sample=False)
-        return final_summary[0]["summary_text"].strip()
-    except Exception as e:
-        print(f"Final summarization failed: {e}")
-        return combined
+    # séparer par double nouvelle ligne pour que chaque chunk devienne un paragraphe distinct
+    full_summary = "\n\n".join(summaries)
+    print("Résumé final généré.")
+    return full_summary
 
 
-# ---------------------------
-# Output writing
-# ---------------------------
-def write_final_output(keywords: List[str], summary: str, output_path: str = OUTPUT_FILE):
-    """
-    Write the global synthesis and keywords to output.txt.
-    """
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("=== GLOBAL SYNTHESIS OF ALL PDF DOCUMENTS ===\n\n")
-        f.write("Keywords (overall themes):\n")
-        f.write(", ".join(keywords) + "\n\n")
-        f.write("=== SUMMARY ===\n\n")
+def write_output(summary: str):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    txt_path = os.path.join(base_dir, OUTPUT_TXT)
+    pdf_path = os.path.join(base_dir, OUTPUT_PDF)
+
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("=== SYNTHÈSE GLOBALE ===\n\n")
         f.write(summary.strip() + "\n\n")
         f.write("=" * 60 + "\n")
-    print(f"\nGlobal synthesis written to '{output_path}'.")
+    print(f"✔ Fichier texte écrit : {txt_path}")
+
+    doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                            leftMargin=50, rightMargin=50, topMargin=50, bottomMargin=50)
+    styles = getSampleStyleSheet()
+    body_style = styles["Normal"]
+    body_style.fontName = "Helvetica"
+    body_style.fontSize = 11
+    body_style.leading = 14
+
+    flowables = []
+    flowables.append(Paragraph("SYNTHÈSE GLOBALE", styles["Heading2"]))
+    flowables.append(Spacer(1, 6))
+
+    for para in summary.strip().split("\n\n"):
+        cleaned = para.strip().replace("\n", " ")
+        if cleaned:
+            flowables.append(Paragraph(cleaned, body_style))
+            flowables.append(Spacer(1, 6))
+
+    doc.build(flowables)
+    print(f"✔ Fichier PDF généré : {pdf_path}")
 
 
-# ---------------------------
-# Main function
-# ---------------------------
 def main():
-    """
-    Collect all PDFs, extract their text, produce one unified corpus,
-    and generate a global synthesis + keywords into output.txt.
-    """
+    all_paragraphs = []
     pdfs = get_all_pdfs()
+
     if not pdfs:
-        print("No PDFs found in input/. Please add files and rerun.")
+        print("Aucun fichier PDF trouvé dans le dossier 'input'.")
         return
 
-    print(f"Found {len(pdfs)} PDF(s). Extracting text...")
+    print(f"PDFs détectés : {pdfs}")
 
-    all_texts = []
     for p in pdfs:
-        print(f"Reading {os.path.basename(p)} ...")
-        raw = extract_pdf_text(p)
-        pre = preprocess_french_text(raw)
-        if pre:
-            all_texts.append(pre)
+        paras = extract_paragraphs(p)
+        if paras:
+            all_paragraphs.extend(paras)
+        else:
+            print(f"Aucun paragraphe extrait pour : {p}")
 
-    if not all_texts:
-        print("No valid text found in PDFs.")
+    if not all_paragraphs:
+        print("Aucun texte extrait des PDFs.")
         return
 
-    combined_text = "\n".join(all_texts)
-    print(f"Total corpus length: {len(combined_text)} characters")
+    # Chunking propre basé sur les paragraphes
+    chunks = chunk_paragraphs(all_paragraphs)
+    print(f"{len(chunks)} chunks créés à partir des paragraphes.")
 
-    keywords = extract_global_keywords(combined_text)
-    summary = summarize_long_text(combined_text)
-    write_final_output(keywords, summary)
+    # Résumé
+    full_text = "\n\n".join(chunks)
+    resume = neuronal_net_resum(full_text)
+
+    write_output(resume)
+
 
 
 if __name__ == "__main__":
