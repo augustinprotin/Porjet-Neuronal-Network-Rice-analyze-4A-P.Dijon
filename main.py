@@ -108,7 +108,6 @@ def extract_paragraphs(pdf_path: str) -> list[str]:
         print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return []
 
-
 def chunk_paragraphs(paragraphs: list[str], max_tokens: int = 600) -> list[str]:
     """
     Construit des chunks de texte sans jamais couper un paragraphe.
@@ -134,8 +133,6 @@ def chunk_paragraphs(paragraphs: list[str], max_tokens: int = 600) -> list[str]:
 
     return chunks
 
-
-
 def chunk_text_by_tokens(text: str, max_tokens: int = None) -> list[str]:
     if not max_tokens:
         # garder une marge de sécurité par rapport à la limite du modèle
@@ -148,14 +145,11 @@ def chunk_text_by_tokens(text: str, max_tokens: int = None) -> list[str]:
         chunks.append(chunk_text.strip())
     return [c for c in chunks if c]
 
-
 def neuronal_net_resum(text: str):
     if not text.strip():
         return "Aucun texte trouvé."
     chunks = chunk_text_by_tokens(text)
     # filtre pour ne recuperer que les paragraophes qui parles de riz
-    for chnks in chunks :
-        chnks = word_filter(chnks)
     summaries = []
     print(f"{len(chunks)} blocs à résumer.")
     # paramètres raisonnables de résumé (en tokens)
@@ -193,7 +187,6 @@ def neuronal_net_resum(text: str):
     print("Résumé final généré.")
     return full_summary
 
-
 def write_output(summary: str):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     txt_path = os.path.join(base_dir, OUTPUT_TXT)
@@ -225,7 +218,6 @@ def write_output(summary: str):
 
     doc.build(flowables)
     print(f"✔ Fichier PDF généré : {pdf_path}")
-
 
 def main():
     all_paragraphs = []
