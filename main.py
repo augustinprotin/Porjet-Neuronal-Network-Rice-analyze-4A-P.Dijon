@@ -1,6 +1,6 @@
 from transformers import pipeline, AutoTokenizer
-from PyPDF2 import PdfReader
-import re
+import fitz
+#import frontend
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -25,41 +25,105 @@ def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
 
 def extract_pdf_text(pdf_path: str) -> str:
     try:
-        with open(pdf_path, "rb") as f:
-            reader = PdfReader(f)
-            full_text = ""
+        doc = fitz.open(pdf_path)
+        full_text = ""
 
-            # Extraction du texte de chaque page
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    full_text += text + "\n"
+        for page_num, page in enumerate(doc, start=1):
+            blocks = page.get_text("dict")["blocks"]
+            for block in blocks:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span["text"].strip()
+                        color = span.get("color", (0, 0, 0))
+                        if isinstance(color, int):
+                            # convertir l'entier 0xRRGGBB en tuple (r,g,b) normalisé entre 0 et 1
+                            r = ((color >> 16) & 255) / 255
+                            g = ((color >> 8) & 255) / 255
+                            b = (color & 255) / 255
+                            color = (r, g, b)
+                        size = span["size"]
 
-        # Expression régulière pour détecter les titres de section (majuscules accentuées incluses)
-        pattern = r"\b([A-ZÉÈÀÙÂÊÎÔÛÇ]+(?:\s+[A-ZÉÈÀÙÂÊÎÔÛÇ]+)*)\b"
+                        # === Détection du texte vert (titres de section) ===
+                        if color[1] > 0.6 and color[0] < 0.4 and color[2] < 0.4:
+                            full_text += f"\n=== {text.upper()} ===\n"
+                        else:
+                            full_text += " " + text
 
-        # Recherche des titres
-        titles = re.findall(pattern, full_text)
+            full_text += "\n\n"
 
-        # Liste d'exclusions pour éviter les faux positifs
-        exclusions = {"REPRODUCTION", "BULLETIN", "PAGE", "AOUT", "RIZ", "VARIETES", "DES"}
-
-        # Ajout des balises dans le texte
-        for title in titles:
-            if title not in exclusions and len(title) > 3:
-                full_text = re.sub(rf"\b{re.escape(title)}\b", f"\n=== {title} ===\n", full_text)
-
-        # Sauvegarde du texte annoté
         output_path = pdf_path.replace(".pdf", "_annotated.txt")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(full_text)
 
-        print(f"✅ Extraction terminée : {output_path} généré.")
+        print(f"✅ Extraction terminée (avec styles) : {output_path}")
         return full_text
 
     except Exception as e:
         print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return ""
+
+def extract_paragraphs(pdf_path: str) -> list[str]:
+    """
+    Extrait proprement les paragraphes d’un PDF en respectant
+    la structure naturelle des blocs textuels du document.
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        paragraphs = []
+
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
+
+            for block in blocks:
+                # type 0 = bloc texte
+                if block["type"] != 0:
+                    continue
+
+                block_text = ""
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        t = span.get("text", "").strip()
+                        if t:
+                            block_text += " " + t
+
+                #le block au dessus fait toutes la magie, il permet de récuépéré les différents "block"/paragraphe, de récupérér la police ou les spé avec "span"
+                #et après récupère le texte dans ces blocks. Enfin, strip enlève juste les espaces inutiles qui se sont glissés là.
+
+                clean = block_text.strip()
+                if clean:
+                    paragraphs.append(clean)
+
+        return paragraphs
+
+    except Exception as e:
+        print(f"Erreur lors de la lecture de {pdf_path}: {e}")
+        return []
+
+
+def chunk_paragraphs(paragraphs: list[str], max_tokens: int = 600) -> list[str]:
+    """
+    Construit des chunks de texte sans jamais couper un paragraphe.
+    Chaque chunk reste sous la limite de tokens du modèle.
+    """
+    chunks = []
+    current = ""
+
+    for para in paragraphs:
+        test_text = (current + " " + para).strip()
+        token_count = len(tokenizer.encode(test_text, add_special_tokens=False))
+
+        if token_count > max_tokens:
+            # On "ferme" le chunk courant
+            if current.strip():
+                chunks.append(current.strip())
+            current = para  # On commence un nouveau chunk
+        else:
+            current = test_text
+
+    if current.strip():
+        chunks.append(current.strip())
+
+    return chunks
 
 
 
@@ -152,24 +216,36 @@ def write_output(summary: str):
 
 
 def main():
-    text = ""
+    all_paragraphs = []
     pdfs = get_all_pdfs()
+
     if not pdfs:
         print("Aucun fichier PDF trouvé dans le dossier 'input'.")
         return
-    print(f"PDFs détectés : {pdfs}")
-    for p in pdfs:
-        text_part = extract_pdf_text(p)
-        if text_part:
-            # ajouter un séparateur pour éviter la fusion brutale de mots/phrases entre PDF
-            text += "\n\n" + text_part
-            print(f"✔ Fichier texte écrit : {text}")
 
-    if not text.strip():
+    print(f"PDFs détectés : {pdfs}")
+
+    for p in pdfs:
+        paras = extract_paragraphs(p)
+        if paras:
+            all_paragraphs.extend(paras)
+        else:
+            print(f"Aucun paragraphe extrait pour : {p}")
+
+    if not all_paragraphs:
         print("Aucun texte extrait des PDFs.")
         return
-    resume = neuronal_net_resum(text)
+
+    # Chunking propre basé sur les paragraphes
+    chunks = chunk_paragraphs(all_paragraphs)
+    print(f"{len(chunks)} chunks créés à partir des paragraphes.")
+
+    # Résumé
+    full_text = "\n\n".join(chunks)
+    resume = neuronal_net_resum(full_text)
+
     write_output(resume)
+
 
 
 if __name__ == "__main__":
