@@ -9,8 +9,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 INPUT_FOLDER = "input"
 OUTPUT_TXT = "output.txt"
 OUTPUT_PDF = "rapport.pdf"
-MODEL_NAME = "facebook/bart-large-cnn"
-words = [""]
+MODEL_NAME = "plguillou/t5-base-fr-sum-cnndm"
+words = ["Riz", "riz"]
 
 texte_de_test = ["La transition énergétique repose sur une mutation profonde des systèmes de production, de transport et de consommation d’énergie. Elle vise à réduire la dépendance aux énergies fossiles et à limiter les émissions de gaz à effet de serre. Cette transformation implique des évolutions techniques, économiques et réglementaires importantes.",
                  "Le développement des énergies renouvelables constitue un pilier central de cette transition. L’éolien, le solaire, l’hydraulique et la biomasse occupent une place croissante dans le mix énergétique mondial. Leur intégration massive nécessite toutefois une adaptation des réseaux électriques, notamment pour gérer l’intermittence et garantir la stabilité du système.",
@@ -18,7 +18,12 @@ texte_de_test = ["La transition énergétique repose sur une mutation profonde d
                  "Enfin, la réussite de la transition énergétique dépend de la mobilisation des acteurs publics et privés. Les politiques gouvernementales, les investissements des entreprises et les changements de comportement des citoyens sont indispensables pour soutenir cette transformation. Sans coordination et engagement collectif, les objectifs climatiques ne pourront pas être atteints."]
 
 # Initialisation du tokenizer et du modèle de résumé
-summarizer = pipeline("summarization", model=MODEL_NAME)
+summarizer = pipeline(
+    "summarization",
+    model=MODEL_NAME,
+    tokenizer=MODEL_NAME,
+    device=-1  # mettre device=0 si tu as un GPU CUDA disponible
+)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 
@@ -209,9 +214,9 @@ def main():
                 print ("mot non-présent, paragraphe non-validé")
 
 
-        if not filtered_paragraphs:
-            print("Aucun paragraphe contenant les mots recherchés.")
-            return
+    if not filtered_paragraphs:
+        print("Aucun paragraphe contenant les mots recherchés.")
+        return
 
     # Etape 4 : On transforme les paragraphes filtrés en chunks
     chunks = chunk_paragraphs(filtered_paragraphs)
@@ -233,3 +238,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ATTENTION, EXECUTER "pip install --upgrade transformers[sentencepiece] accelerate"
