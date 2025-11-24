@@ -71,8 +71,6 @@ def word_filter(texte : str) :
     print ("caca")
     return ""
 
-        return ""
-
 def extract_paragraphs(pdf_path: str) -> list[str]:
     """
     Extrait proprement les paragraphes d’un PDF en respectant
