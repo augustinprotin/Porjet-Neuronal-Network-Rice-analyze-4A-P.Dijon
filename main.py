@@ -147,45 +147,33 @@ def chunk_text_by_tokens(text: str, max_tokens: int = None) -> list[str]:
 
 def neuronal_net_resum(text: str):
     if not text.strip():
-        return "Aucun texte trouvé."
-    chunks = chunk_text_by_tokens(text)
-    # filtre pour ne recuperer que les paragraophes qui parles de riz
-    summaries = []
-    print(f"{len(chunks)} blocs à résumer.")
-    # paramètres raisonnables de résumé (en tokens)
+        return "Aucun texte fourni."
+    
     DEFAULT_MAX_SUMMARY = 180
     DEFAULT_MIN_SUMMARY = 60
-    for i, chunk in enumerate(chunks, start=1):
-        # adapter si chunk très court
-        try:
-            token_count = len(tokenizer.encode(chunk, add_special_tokens=False))
-        except Exception:
-            token_count = 0
-        max_len = min(DEFAULT_MAX_SUMMARY, max(30, int(token_count * 0.25)))
-        min_len = max(DEFAULT_MIN_SUMMARY // 3, int(max_len * 0.4))
-        print(f"Bloc {i}/{len(chunks)} : ~{token_count} tokens → résumé {min_len}-{max_len} tokens.")
-        try:
-            out = summarizer(
-                chunk,
-                max_length=max_len,
-                min_length=min_len,
-                do_sample=False,
-                truncation=True
-            )
-            summary = out[0]["summary_text"].strip()
-            if summary:
-                summaries.append(summary)
-            else:
-                print(f"Attention: résumé vide pour le bloc {i}, j'ajoute un fallback (premières phrases).")
-                summaries.append(chunk[:min(400, len(chunk))].strip())
-        except Exception as e:
-            print(f"Erreur sur le bloc {i}: {e}. Ajout d'un fallback.")
-            summaries.append(chunk[:min(400, len(chunk))].strip())
 
-    # séparer par double nouvelle ligne pour que chaque chunk devienne un paragraphe distinct
-    full_summary = "\n\n".join(summaries)
-    print("Résumé final généré.")
-    return full_summary
+    # Ici on calcule approximativement la longueur du résumé à produire
+    # en fonction de la taille du texte (optionnel mais logique)
+    token_count = len(text.split())
+    max_len = min(DEFAULT_MAX_SUMMARY, max(30, int(token_count * 0.25)))
+    min_len = max(DEFAULT_MIN_SUMMARY // 2, int(max_len * 0.4))
+
+    try:
+        out = summarizer(
+            text,
+            max_length=max_len,
+            min_length=min_len,
+            do_sample=False,
+            truncation=True
+        )
+        summary = out[0]["summary_text"].strip()
+        if summary:
+            return summary
+        else:
+            return text[:400].strip()  # fallback
+
+    except Exception:
+        return text[:400].strip()  # fallback
 
 def write_output(summary: str):
     base_dir = os.path.dirname(os.path.abspath(__file__))
