@@ -9,6 +9,7 @@ INPUT_FOLDER = "input"
 OUTPUT_TXT = "output.txt"
 OUTPUT_PDF = "rapport.pdf"
 MODEL_NAME = "facebook/bart-large-cnn"
+words = ["riz", "Riz"]
 summarizer = pipeline("summarization", model=MODEL_NAME, truncation=True)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
@@ -21,6 +22,46 @@ def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
         return []
     return sorted([os.path.join(input_path, f) for f in os.listdir(input_path) if f.lower().endswith(".pdf")])
 
+#def extract_pdf_text(pdf_path: str) -> str:
+    '''
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            full_text = ""
+
+            # Extraction du texte de chaque page
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    full_text += text + "\n"
+
+        # Expression régulière pour détecter les titres de section (majuscules accentuées incluses)
+        pattern = r"\b([A-ZÉÈÀÙÂÊÎÔÛÇ]+(?:\s+[A-ZÉÈÀÙÂÊÎÔÛÇ]+)*)\b"
+
+        # Recherche des titres
+        titles = re.findall(pattern, full_text)
+
+        # Liste d'exclusions pour éviter les faux positifs
+        exclusions = {"REPRODUCTION", "BULLETIN", "PAGE", "AOUT", "RIZ", "VARIETES", "DES"}
+
+        # Ajout des balises dans le texte
+        for title in titles:
+            if title not in exclusions and len(title) > 3:
+                full_text = re.sub(rf"\b{re.escape(title)}\b", f"\n=== {title} ===\n", full_text)
+
+        # Sauvegarde du texte annoté
+        output_path = pdf_path.replace(".pdf", "_annotated.txt")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(full_text)
+
+        print(f"✅ Extraction terminée : {output_path} généré.")
+        return full_text
+
+    except Exception as e:
+        print(f"Erreur lors de la lecture de {pdf_path}: {e}")
+        return ""
+    
+    ''' 
     
     
 def extract_pdf_text(pdf_path: str) -> str:
@@ -32,7 +73,15 @@ def extract_pdf_text(pdf_path: str) -> str:
     except Exception as e:
         print(f"Erreur lors de la lecture de {pdf_path}: {e}")
         return ""
-    
+
+def word_filter(texte : str) :
+    for wrd in words :
+        if wrd in texte :
+            print("le mot :"+wrd+" est présent")
+            return texte
+    print ("caca")
+    return ""
+
 
 def chunk_text_by_tokens(text: str, max_tokens: int = None) -> list[str]:
     if not max_tokens:
@@ -50,6 +99,9 @@ def neuronal_net_resum(text: str):
     if not text.strip():
         return "Aucun texte trouvé."
     chunks = chunk_text_by_tokens(text)
+    # filtre pour ne recuperer que les paragraophes qui parles de riz
+    for chnks in chunks :
+        chnks = word_filter(chnks)
     summaries = []
     print(f"{len(chunks)} blocs à résumer.")
     # paramètres raisonnables de résumé (en tokens)
@@ -136,6 +188,7 @@ def main():
     if not text.strip():
         print("Aucun texte extrait des PDFs.")
         return
+    
     resume = neuronal_net_resum(text)
     write_output(resume)
 
