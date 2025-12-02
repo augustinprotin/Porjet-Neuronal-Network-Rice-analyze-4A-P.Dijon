@@ -1,240 +1,335 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 from transformers import pipeline, AutoTokenizer
 import fitz
 import os
+import sys
+import time
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+import warnings
 
-# Configuration
+warnings.filterwarnings(
+    "ignore",
+    message="Both `max_new_tokens`"
+)
+
+# ---------- CONFIG ----------
 INPUT_FOLDER = "input"
 OUTPUT_TXT = "output.txt"
 OUTPUT_PDF = "rapport.pdf"
 MODEL_NAME = "plguillou/t5-base-fr-sum-cnndm"
-words = ["Riz", "riz"]
+# mots-clés à rechercher (case-insensitive)
+words = ["riz", "Riz"]  # tu peux modifier / ajouter
 
-texte_de_test = ["La transition énergétique repose sur une mutation profonde des systèmes de production, de transport et de consommation d’énergie. Elle vise à réduire la dépendance aux énergies fossiles et à limiter les émissions de gaz à effet de serre. Cette transformation implique des évolutions techniques, économiques et réglementaires importantes.",
-                 "Le développement des énergies renouvelables constitue un pilier central de cette transition. L’éolien, le solaire, l’hydraulique et la biomasse occupent une place croissante dans le mix énergétique mondial. Leur intégration massive nécessite toutefois une adaptation des réseaux électriques, notamment pour gérer l’intermittence et garantir la stabilité du système.",
-                 "L’efficacité énergétique représente un autre levier essentiel. Elle consiste à diminuer la consommation d’énergie pour un même service rendu. Cela implique l’amélioration de l’isolation des bâtiments, l’optimisation des procédés industriels et l’adoption d’appareils plus performants. Les gains obtenus permettent de réduire la demande globale sans sacrifier le confort ou la productivité.",
-                 "Enfin, la réussite de la transition énergétique dépend de la mobilisation des acteurs publics et privés. Les politiques gouvernementales, les investissements des entreprises et les changements de comportement des citoyens sont indispensables pour soutenir cette transformation. Sans coordination et engagement collectif, les objectifs climatiques ne pourront pas être atteints."]
+# réglage verbose pour plus/moins de logs
+VERBOSE = True
 
-# Initialisation du tokenizer et du modèle de résumé
-summarizer = pipeline(
-    "summarization",
-    model=MODEL_NAME,
-    tokenizer=MODEL_NAME,
-    device=-1  # mettre device=0 si tu as un GPU CUDA disponible
-)
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+# ---------- INITIALISATIONS ----------
+def safe_base_dir():
+    # si __file__ n'existe pas (ex: execution interactive), fallback sur cwd
+    return os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 
+BASE_DIR = safe_base_dir()
 
-# Récupère la liste des fichiers PDF dans le dossier INPUT_FOLDER
-def get_all_pdfs(folder: str = INPUT_FOLDER) -> list[str]:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    input_path = os.path.join(base_dir, folder)
+# Charge tokenizer et modèle, avec gestion d'erreur claire
+try:
+    print("Initialisation du tokenizer... ", end="", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    print("OK")
+except Exception as e:
+    print(f"\nErreur lors du chargement du tokenizer pour '{MODEL_NAME}': {e}")
+    print("Vérifie que le nom du modèle est correct et que tu as accès au modèle.")
+    raise
+
+try:
+    print("Initialisation du modèle de summarization (pipeline)... ", end="", flush=True)
+    # device=-1 = CPU, mettre device=0 si GPU CUDA disponible
+    summarizer = pipeline("summarization", model=MODEL_NAME, tokenizer=tokenizer, device=-1)
+    print("OK")
+except Exception as e:
+    print(f"\nErreur lors de l'initialisation du pipeline summarization: {e}")
+    raise
+
+# ---------- FONCTIONS UTILITAIRES ----------
+
+def cprint(msg: str, color: str = ""):
+    """Print avec couleurs ANSI simples (color vide = pas de couleur)."""
+    colors = {
+        "green": "\033[92m",
+        "yellow": "\033[93m",
+        "red": "\033[91m",
+        "blue": "\033[94m",
+        "reset": "\033[0m"
+    }
+    prefix = colors.get(color, "")
+    reset = colors["reset"] if prefix else ""
+    print(f"{prefix}{msg}{reset}")
+
+def get_all_pdfs(folder: str = INPUT_FOLDER) -> list:
+    """Renvoie la liste des fichiers PDF complets (chemin absolu) du dossier input."""
+    input_path = os.path.join(BASE_DIR, folder)
+
     if not os.path.exists(input_path):
-        # Si le dossier n'existe pas, le créer et informer l'utilisateur
         os.makedirs(input_path, exist_ok=True)
-        print(f"Dossier '{input_path}' créé. Ajoutez vos PDFs et relancez.")
+        cprint(f"Dossier '{input_path}' créé. Ajoute tes PDFs dans ce dossier puis relance le script.", "yellow")
         return []
-    # Retourne la liste triée des chemins absolus vers les fichiers .pdf
-    return sorted([os.path.join(input_path, f) for f in os.listdir(input_path) if f.lower().endswith(".pdf")])
 
+    pdfs = sorted([
+        os.path.join(input_path, f)
+        for f in os.listdir(input_path)
+        if f.lower().endswith(".pdf")
+    ])
 
-# Extrait les paragraphes textuels d'un PDF en respectant les blocs textuels
-def extract_paragraphs(pdf_path: str) -> list[str]:
+    if pdfs:
+        cprint(f"{len(pdfs)} fichier(s) PDF trouvé(s) dans '{input_path}':", "green")
+        for p in pdfs:
+            print("   -", p)
+    else:
+        cprint(f"Aucun PDF trouvé dans '{input_path}'.", "yellow")
+
+    return pdfs
+
+def extract_paragraphs(pdf_path: str) -> list:
+    """Extrait des paragraphes cohérents (basés sur la ponctuation) depuis un PDF."""
+    paragraphs = []
     try:
+        if VERBOSE:
+            cprint(f"Ouverture : {pdf_path}", "blue")
         doc = fitz.open(pdf_path)
-        paragraphs = []
         buffer = ""
+        page_count = doc.page_count if hasattr(doc, "page_count") else len(doc)
 
-        for page in doc:
-            blocks = page.get_text("dict")["blocks"]
-
+        for i, page in enumerate(doc, start=1):
+            if VERBOSE:
+                print(f"  Lecture page {i}/{page_count} ...", end="\r")
+            blocks = page.get_text("dict").get("blocks", [])
             for block in blocks:
                 if block.get("type") != 0:
                     continue
-
                 for line in block.get("lines", []):
                     line_text = ""
                     for span in line.get("spans", []):
                         t = span.get("text", "").strip()
                         if t:
-                            line_text += " " + t
-
+                            # on concatène les spans pour reformer la ligne
+                            if line_text:
+                                line_text += " " + t
+                            else:
+                                line_text = t
                     line_text = line_text.strip()
                     if not line_text:
                         continue
-
-                    buffer += " " + line_text
-
-                    # Si la ligne se termine par un signe de fin de phrase, on "ferme" le paragraphe
+                    buffer += (" " + line_text).strip()
+                    # si fin de phrase, on ferme le paragraphe
                     if line_text.endswith((".", "!", "?")):
                         clean = buffer.strip()
                         if clean:
                             paragraphs.append(clean)
                         buffer = ""
 
-        # Dernier paragraphe si pas terminé proprement
         if buffer.strip():
             paragraphs.append(buffer.strip())
+
+        if VERBOSE:
+            cprint(f"  -> {len(paragraphs)} paragraphe(s) extraits de {os.path.basename(pdf_path)}", "green")
 
         return paragraphs
 
     except Exception as e:
-        print(f"Erreur lors de la lecture de {pdf_path}: {e}")
+        cprint(f"Erreur lors de la lecture de '{pdf_path}': {e}", "red")
         return []
 
-
-
-# Regroupe des paragraphes sans couper un paragraphe pour rester sous la limite en tokens
-def chunk_paragraphs(paragraphs: list[str], max_tokens: int = 600) -> list[str]:
+def chunk_paragraphs(paragraphs: list, max_tokens: int = 600) -> list:
+    """Regroupe les paragraphes en chunks sans dépasser max_tokens (tokenizer utilisé)."""
+    if not paragraphs:
+        return []
     chunks = []
     current = ""
-
     for para in paragraphs:
-        test_text = (current + " " + para).strip()
-        token_count = len(tokenizer.encode(test_text, add_special_tokens=False))
-
+        test_text = (current + " " + para).strip() if current else para
+        # utiliser tokenizer pour estimer le nombre de tokens
+        try:
+            token_count = len(tokenizer.encode(test_text, add_special_tokens=False))
+        except Exception:
+            # fallback: approximation par mots
+            token_count = len(test_text.split())
         if token_count > max_tokens:
-            # On ferme le chunk courant si non vide, puis on démarre un nouveau chunk
             if current.strip():
                 chunks.append(current.strip())
-            current = para
+            # si un paragraphe seul dépasse la limite, on l'ajoute lui-même (évite boucle infinie)
+            single_count = len(tokenizer.encode(para, add_special_tokens=False)) if para else 0
+            if single_count > max_tokens:
+                # on coupe proprement le paragraphe en morceaux approximatifs par mots
+                words = para.split()
+                piece = []
+                for w in words:
+                    piece.append(w)
+                    test_piece = " ".join(piece)
+                    if len(tokenizer.encode(test_piece, add_special_tokens=False)) > max_tokens:
+                        # retirer dernier mot pour rester en dessous
+                        piece.pop()
+                        if piece:
+                            chunks.append(" ".join(piece))
+                        piece = [w]
+                if piece:
+                    chunks.append(" ".join(piece))
+                current = ""
+            else:
+                current = para
         else:
             current = test_text
-
     if current.strip():
         chunks.append(current.strip())
-
     return chunks
 
-
-# Résume un texte avec le modèle de summarization, prend des garde-fous en fallback
 def neuronal_net_resum(text: str) -> str:
-    if not text.strip():
+    """Résumé basé sur le pipeline summarizer avec garde-fous (longueur min/max raisonnable)."""
+    if not text or not text.strip():
         return ""
 
+    # estimation simple du nombre de tokens / mots
     token_count = len(text.split())
 
-    # Calcule une taille de résumé plus large pour éviter les coupures
-    max_len = token_count#min(250, max(60, int(token_count * 0.30)))
-    min_len = int(max_len * 0.35)
+    # choix de max_length raisonnable pour le modèle (éviter max trop grand)
+    max_len = min(512, max(60, int(token_count * 0.30)))  # entre 60 et 512
+    min_len = max(20, int(max_len * 0.30))
 
     try:
-        out = summarizer(
-            text,
-            max_length=max_len,
-            min_length=min_len,
-            do_sample=False
-        )
-        summary = out[0]["summary_text"].strip()
-
-        # Ajoute un point si la phrase ne se termine pas correctement
+        if VERBOSE:
+            print(f"    Résumé (approx tokens={token_count}) -> min_len={min_len}, max_len={max_len} ...", end="", flush=True)
+        out = summarizer(text, max_length=max_len, min_length=min_len, do_sample=False)
+        summary = out[0].get("summary_text", "").strip()
         if summary and summary[-1] not in ".!?":
             summary += "."
-
+        if VERBOSE:
+            print(" OK")
         return summary
-
     except Exception as e:
-        print(f"Erreur lors du résumé: {e}")
-        fallback = text[:400].strip()
+        cprint(f"\n    Erreur lors du résumé: {e}", "red")
+        # fallback : tronquer
+        fallback = (text[:400].strip() + "...") if len(text) > 400 else text.strip()
         return fallback
 
-
-# Écrit la synthèse finale en TXT et PDF
 def write_output(summary: str):
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    txt_path = os.path.join(base_dir, OUTPUT_TXT)
-    pdf_path = os.path.join(base_dir, OUTPUT_PDF)
+    """Écrit le résumé global en TXT et PDF."""
+    txt_path = os.path.join(BASE_DIR, OUTPUT_TXT)
+    pdf_path = os.path.join(BASE_DIR, OUTPUT_PDF)
 
-    # Écriture du fichier texte
-    with open(txt_path, "w", encoding="utf-8") as f:
-        f.write("=== SYNTHÈSE GLOBALE ===\n\n")
-        f.write(summary.strip() + "\n\n")
-        f.write("=" * 60 + "\n")
-    print(f"✔ Fichier texte écrit : {txt_path}")
+    try:
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("=== SYNTHÈSE GLOBALE ===\n\n")
+            f.write(summary.strip() + "\n\n")
+            f.write("=" * 60 + "\n")
+        cprint(f"✔ Fichier texte écrit : {txt_path}", "green")
+    except Exception as e:
+        cprint(f"Erreur écriture TXT: {e}", "red")
 
-    # Génération du PDF via reportlab
-    doc = SimpleDocTemplate(pdf_path, pagesize=A4,
-                            leftMargin=50, rightMargin=50, topMargin=50, bottomMargin=50)
-    styles = getSampleStyleSheet()
-    body_style = styles["Normal"]
-    body_style.fontName = "Helvetica"
-    body_style.fontSize = 11
-    body_style.leading = 14
+    try:
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                                leftMargin=50, rightMargin=50, topMargin=50, bottomMargin=50)
+        styles = getSampleStyleSheet()
+        body_style = styles["Normal"]
+        body_style.fontName = "Helvetica"
+        body_style.fontSize = 11
+        body_style.leading = 14
 
-    flowables = []
-    flowables.append(Paragraph("SYNTHÈSE GLOBALE", styles["Heading2"]))
-    flowables.append(Spacer(1, 6))
+        flowables = []
+        flowables.append(Paragraph("SYNTHÈSE GLOBALE", styles["Heading2"]))
+        flowables.append(Spacer(1, 6))
 
-    for para in summary.strip().split("\n\n"):
-        cleaned = para.strip().replace("\n", " ")
-        if cleaned:
-            flowables.append(Paragraph(cleaned, body_style))
-            flowables.append(Spacer(1, 6))
+        for para in summary.strip().split("\n\n"):
+            cleaned = para.strip().replace("\n", " ")
+            if cleaned:
+                flowables.append(Paragraph(cleaned, body_style))
+                flowables.append(Spacer(1, 6))
 
-    doc.build(flowables)
-    print(f"✔ Fichier PDF généré : {pdf_path}")
+        doc.build(flowables)
+        cprint(f"✔ Fichier PDF généré : {pdf_path}", "green")
+    except Exception as e:
+        cprint(f"Erreur génération PDF: {e}", "red")
 
-
+# ---------- MAIN ----------
 def main():
-    # Etape 1 : On récupère les pdfs
+    start_time = time.time()
+    cprint("=== Début du traitement des PDFs ===", "blue")
+
     pdfs = get_all_pdfs()
-    all_paragraphs = extract_paragraphs(pdfs)
-    final_resume = ""
     if not pdfs:
-        print("Aucun fichier PDF trouvé dans le dossier 'input'.")
+        cprint("Fin (aucun PDF à traiter).", "yellow")
         return
-    print(f"PDFs détectés : {pdfs}")
 
-    # Etape 2 : On les transforme en paragraphes structurés
-    for p in pdfs:
-
+    all_paragraphs = []
+    # extraction par fichier
+    for idx, p in enumerate(pdfs, start=1):
+        cprint(f"[{idx}/{len(pdfs)}] Extraction depuis : {os.path.basename(p)}", "blue")
         paras = extract_paragraphs(p)
         if paras:
             all_paragraphs.extend(paras)
         else:
-            print(f"Aucun paragraphe extrait pour : {p}")
+            cprint(f"  Aucun paragraphe extrait pour : {p}", "yellow")
+
     if not all_paragraphs:
-        print("Aucun texte extrait des PDFs.")
+        cprint("Aucun texte extrait des PDFs. Fin.", "red")
         return
 
-    # Etape 3 : Filtrage des paragraphes selon la présence d'au moins un mot clé
+    cprint(f"Total paragraphes extraits : {len(all_paragraphs)}", "green")
+
+    # Filtrage : ne garder que les paragraphes contenant au moins un mot-clé (case-insensitive)
     filtered_paragraphs = []
-
-    for para in all_paragraphs:
+    cprint("Filtrage des paragraphes selon les mots-clés...", "blue")
+    for i, para in enumerate(all_paragraphs, start=1):
+        # checks case-insensitively
+        lower_para = para.lower()
+        matched = False
         for w in words:
-            print ("paargraphe traité")
-            print (para)
-            if w in para:
+            if w.lower() in lower_para:
                 filtered_paragraphs.append(para)
-                print ("mot présent, paragraphe validé")
-                break  # on évite d'ajouter deux fois le même paragraphe
-            else :
-                print ("mot non-présent, paragraphe non-validé")
+                matched = True
+                break
+        if VERBOSE:
+            status = "✓" if matched else "·"
+            print(f"  [{i}/{len(all_paragraphs)}] {status} (len={len(para.split())} mots)")
 
+    cprint(f"Paragraphes après filtrage : {len(filtered_paragraphs)}", "green")
 
     if not filtered_paragraphs:
-        print("Aucun paragraphe contenant les mots recherchés.")
+        cprint("Aucun paragraphe contenant les mots recherchés. Fin.", "yellow")
         return
 
-    # Etape 4 : On transforme les paragraphes filtrés en chunks
-    chunks = chunk_paragraphs(filtered_paragraphs)
-    print(f"{len(chunks)} chunks créés à partir des paragraphes filtrés.")
+    # Chunking
+    cprint("Création des chunks (groupes de paragraphes)...", "blue")
+    chunks = chunk_paragraphs(filtered_paragraphs, max_tokens=600)
+    cprint(f"{len(chunks)} chunk(s) créés à partir des paragraphes filtrés.", "green")
 
-    # Etape 5 : On résume chaque chunk et on concatène les résumés
-    for chunk in chunks:
-        summary = neuronal_net_resum(chunk)
-        if summary:
-            final_resume += summary + "\n\n"
-
-    if not final_resume.strip():
-        print("Aucun résumé généré.")
+    if not chunks:
+        cprint("Aucun chunk créé. Fin.", "red")
         return
 
-    # Etape 6 : On écrit le résultat final en TXT et PDF
+    # Résumer chaque chunk
+    cprint("Résumé des chunks...", "blue")
+    summaries = []
+    for i, chunk in enumerate(chunks, start=1):
+        cprint(f"  Résumé chunk {i}/{len(chunks)} (approx {len(chunk.split())} mots)...", "blue")
+        s = neuronal_net_resum(chunk)
+        if s:
+            summaries.append(s)
+        else:
+            cprint(f"    Aucun résumé généré pour le chunk {i}", "yellow")
+
+    final_resume = "\n\n".join(summaries).strip()
+    if not final_resume:
+        cprint("Aucun résumé final généré. Fin.", "red")
+        return
+
+    # Ecriture des résultats
+    cprint("Écriture des fichiers de sortie...", "blue")
     write_output(final_resume)
 
+    elapsed = time.time() - start_time
+    cprint(f"=== Traitement terminé en {elapsed:.1f}s ===", "green")
 
 if __name__ == "__main__":
     main()
