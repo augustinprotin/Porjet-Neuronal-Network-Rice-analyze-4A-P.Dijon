@@ -50,13 +50,13 @@ Au premier lancement, le script installe automatiquement :
 ### 1. Ajouter les fichiers PDF
 
 Créer un dossier `input` à la racine du projet et y placer les fichiers PDF à analyser :
-
+```text
 Projet-Neuronal-Network-Rice-analyze/
 ├── main.py
 ├── input/
 │ ├── document1.pdf
 │ ├── document2.pdf
-
+```
 
 ---
 
