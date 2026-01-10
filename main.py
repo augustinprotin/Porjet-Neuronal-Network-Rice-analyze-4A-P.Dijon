@@ -110,8 +110,9 @@ def get_all_pdfs(folder: str = INPUT_FOLDER) -> list:
     return pdfs
 
 def extract_paragraphs(pdf_path: str) -> list:
-    """Extrait des paragraphes cohérents (basés sur la ponctuation) depuis un PDF."""
     paragraphs = []
+    source_name = os.path.basename(pdf_path)
+
     try:
         if VERBOSE:
             cprint(f"Ouverture : {pdf_path}", "blue")
@@ -120,8 +121,6 @@ def extract_paragraphs(pdf_path: str) -> list:
         page_count = doc.page_count if hasattr(doc, "page_count") else len(doc)
 
         for i, page in enumerate(doc, start=1):
-            if VERBOSE:
-                print(f"  Lecture page {i}/{page_count} ...", end="\r")
             blocks = page.get_text("dict").get("blocks", [])
             for block in blocks:
                 if block.get("type") != 0:
@@ -131,33 +130,29 @@ def extract_paragraphs(pdf_path: str) -> list:
                     for span in line.get("spans", []):
                         t = span.get("text", "").strip()
                         if t:
-                            # on concatène les spans pour reformer la ligne
-                            if line_text:
-                                line_text += " " + t
-                            else:
-                                line_text = t
+                            line_text += " " + t if line_text else t
+
                     line_text = line_text.strip()
                     if not line_text:
                         continue
+
                     buffer += (" " + line_text).strip()
-                    # si fin de phrase, on ferme le paragraphe
+
                     if line_text.endswith((".", "!", "?")):
                         clean = buffer.strip()
                         if clean:
-                            paragraphs.append(clean)
+                            paragraphs.append((clean, source_name))
                         buffer = ""
 
         if buffer.strip():
-            paragraphs.append(buffer.strip())
-
-        if VERBOSE:
-            cprint(f"  -> {len(paragraphs)} paragraphe(s) extraits de {os.path.basename(pdf_path)}", "green")
+            paragraphs.append((buffer.strip(), source_name))
 
         return paragraphs
 
     except Exception as e:
-        cprint(f"Erreur lors de la lecture de '{pdf_path}': {e}", "red")
+        cprint(f"Erreur lecture '{pdf_path}': {e}", "red")
         return []
+
 
 def chunk_paragraphs(paragraphs: list, max_tokens: int = 600) -> list:
     """Regroupe les paragraphes en chunks sans dépasser max_tokens (tokenizer utilisé)."""
