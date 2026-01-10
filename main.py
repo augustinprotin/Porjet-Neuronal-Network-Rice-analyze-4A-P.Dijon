@@ -1,5 +1,22 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+import subprocess
+import sys
+
+def install_dependencies():
+    packages = [
+        "transformers[sentencepiece]",
+        "accelerate",
+        "pymupdf",          # cela correspond a fitz
+        "reportlab"
+    ]
+
+    print("Installation des dépendances...")
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install", "--upgrade"
+    ] + packages)
+
+# Installation auto au lancement
+install_dependencies()
+
 
 from transformers import pipeline, AutoTokenizer
 import fitz
