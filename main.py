@@ -154,48 +154,35 @@ def extract_paragraphs(pdf_path: str) -> list:
         return []
 
 
-def chunk_paragraphs(paragraphs: list, max_tokens: int = 600) -> list:
-    """Regroupe les paragraphes en chunks sans dépasser max_tokens (tokenizer utilisé)."""
-    if not paragraphs:
-        return []
+def chunk_paragraphs(paragraphs_with_sources, max_tokens=600):
     chunks = []
-    current = ""
-    for para in paragraphs:
-        test_text = (current + " " + para).strip() if current else para
-        # utiliser tokenizer pour estimer le nombre de tokens
+
+    current_text = ""
+    current_sources = set()
+
+    for para, source in paragraphs_with_sources:
+        test_text = (current_text + " " + para).strip() if current_text else para
+
         try:
             token_count = len(tokenizer.encode(test_text, add_special_tokens=False))
-        except Exception:
-            # fallback: approximation par mots
+        except:
             token_count = len(test_text.split())
+
         if token_count > max_tokens:
-            if current.strip():
-                chunks.append(current.strip())
-            # si un paragraphe seul dépasse la limite, on l'ajoute lui-même (évite boucle infinie)
-            single_count = len(tokenizer.encode(para, add_special_tokens=False)) if para else 0
-            if single_count > max_tokens:
-                # on coupe proprement le paragraphe en morceaux approximatifs par mots
-                words = para.split()
-                piece = []
-                for w in words:
-                    piece.append(w)
-                    test_piece = " ".join(piece)
-                    if len(tokenizer.encode(test_piece, add_special_tokens=False)) > max_tokens:
-                        # retirer dernier mot pour rester en dessous
-                        piece.pop()
-                        if piece:
-                            chunks.append(" ".join(piece))
-                        piece = [w]
-                if piece:
-                    chunks.append(" ".join(piece))
-                current = ""
-            else:
-                current = para
+            if current_text:
+                chunks.append((current_text.strip(), sorted(current_sources)))
+
+            current_text = para
+            current_sources = {source}
         else:
-            current = test_text
-    if current.strip():
-        chunks.append(current.strip())
+            current_text = test_text
+            current_sources.add(source)
+
+    if current_text:
+        chunks.append((current_text.strip(), sorted(current_sources)))
+
     return chunks
+
 
 def neuronal_net_resum(text: str) -> str:
     """Résumé basé sur le pipeline summarizer avec garde-fous (longueur min/max raisonnable)."""
@@ -274,15 +261,15 @@ def main():
         cprint("Fin (aucun PDF à traiter).", "yellow")
         return
 
+    # ---------- EXTRACTION ----------
     all_paragraphs = []
-    # extraction par fichier
-    for idx, p in enumerate(pdfs, start=1):
-        cprint(f"[{idx}/{len(pdfs)}] Extraction depuis : {os.path.basename(p)}", "blue")
-        paras = extract_paragraphs(p)
+    for idx, pdf_path in enumerate(pdfs, start=1):
+        cprint(f"[{idx}/{len(pdfs)}] Extraction depuis : {os.path.basename(pdf_path)}", "blue")
+        paras = extract_paragraphs(pdf_path)   # -> [(texte, source)]
         if paras:
             all_paragraphs.extend(paras)
         else:
-            cprint(f"  Aucun paragraphe extrait pour : {p}", "yellow")
+            cprint(f"  Aucun paragraphe extrait pour : {pdf_path}", "yellow")
 
     if not all_paragraphs:
         cprint("Aucun texte extrait des PDFs. Fin.", "red")
@@ -290,21 +277,23 @@ def main():
 
     cprint(f"Total paragraphes extraits : {len(all_paragraphs)}", "green")
 
-    # Filtrage : ne garder que les paragraphes contenant au moins un mot-clé (case-insensitive)
+    # ---------- FILTRAGE ----------
     filtered_paragraphs = []
     cprint("Filtrage des paragraphes selon les mots-clés...", "blue")
-    for i, para in enumerate(all_paragraphs, start=1):
-        # checks case-insensitively
+
+    for i, (para, source) in enumerate(all_paragraphs, start=1):
         lower_para = para.lower()
         matched = False
+
         for w in words:
             if w.lower() in lower_para:
-                filtered_paragraphs.append(para)
+                filtered_paragraphs.append((para, source))
                 matched = True
                 break
+
         if VERBOSE:
             status = "✓" if matched else "·"
-            print(f"  [{i}/{len(all_paragraphs)}] {status} (len={len(para.split())} mots)")
+            print(f"  [{i}/{len(all_paragraphs)}] {status} ({len(para.split())} mots) [{source}]")
 
     cprint(f"Paragraphes après filtrage : {len(filtered_paragraphs)}", "green")
 
@@ -312,37 +301,44 @@ def main():
         cprint("Aucun paragraphe contenant les mots recherchés. Fin.", "yellow")
         return
 
-    # Chunking
-    cprint("Création des chunks (groupes de paragraphes)...", "blue")
-    chunks = chunk_paragraphs(filtered_paragraphs, max_tokens=600)
-    cprint(f"{len(chunks)} chunk(s) créés à partir des paragraphes filtrés.", "green")
+    # ---------- CHUNKING ----------
+    cprint("Création des chunks...", "blue")
+    chunks = chunk_paragraphs(filtered_paragraphs, max_tokens=600)  
+    # -> [(texte_chunk, [sources])]
+
+    cprint(f"{len(chunks)} chunk(s) créés.", "green")
 
     if not chunks:
         cprint("Aucun chunk créé. Fin.", "red")
         return
 
-    # Résumer chaque chunk
+    # ---------- RÉSUMÉ ----------
     cprint("Résumé des chunks...", "blue")
     summaries = []
-    for i, chunk in enumerate(chunks, start=1):
-        cprint(f"  Résumé chunk {i}/{len(chunks)} (approx {len(chunk.split())} mots)...", "blue")
-        s = neuronal_net_resum(chunk)
-        if s:
-            summaries.append(s)
+
+    for i, (chunk_text, sources) in enumerate(chunks, start=1):
+        cprint(f"  Résumé chunk {i}/{len(chunks)} ({len(chunk_text.split())} mots)...", "blue")
+        summary = neuronal_net_resum(chunk_text)
+
+        if summary:
+            source_line = "Source(s) : " + ", ".join(sources)
+            summaries.append(summary + "\n" + source_line)
         else:
             cprint(f"    Aucun résumé généré pour le chunk {i}", "yellow")
 
     final_resume = "\n\n".join(summaries).strip()
+
     if not final_resume:
         cprint("Aucun résumé final généré. Fin.", "red")
         return
 
-    # Ecriture des résultats
+    # ---------- ÉCRITURE ----------
     cprint("Écriture des fichiers de sortie...", "blue")
     write_output(final_resume)
 
     elapsed = time.time() - start_time
     cprint(f"=== Traitement terminé en {elapsed:.1f}s ===", "green")
+
 
 
 
